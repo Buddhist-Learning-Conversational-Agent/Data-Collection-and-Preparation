@@ -103,28 +103,38 @@ def is_valid_tripitaka_content(sinhala_text: str, pali_text: str, title: str) ->
     return True
 
 def scrape_tripitaka_page(url: str):
-    # Setup Chrome options for headless browsing
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run in headless mode
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
+    from .persistent_webdriver import get_persistent_driver, restart_persistent_driver
     
-    # Setup Chrome driver
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    # Get the persistent WebDriver instance
+    driver = get_persistent_driver()
+    
+    if driver is None:
+        raise Exception("Failed to get persistent WebDriver instance")
     
     try:
         print(f"Scraping URL: {url}")
-        driver.get(url)
         
-        # Wait for the Angular app to load and content to appear
-        # We'll wait for either content to appear or a reasonable timeout
-        wait = WebDriverWait(driver, 20)
-        
-        # Wait a bit for the page to fully load
-        time.sleep(5)
+        # Try to load the page with retry logic
+        max_page_retries = 2
+        for attempt in range(max_page_retries):
+            try:
+                driver.get(url)
+                # Wait for the Angular app to load and content to appear
+                wait = WebDriverWait(driver, 20)
+                # Wait a bit for the page to fully load
+                time.sleep(5)
+                break
+            except Exception as page_error:
+                print(f"⚠️  Page load attempt {attempt + 1} failed: {str(page_error)[:100]}...")
+                if attempt == max_page_retries - 1:
+                    # Try to restart the driver
+                    from .persistent_webdriver import restart_persistent_driver
+                    restart_persistent_driver()
+                    driver = get_persistent_driver()
+                    if driver is None:
+                        raise Exception("Could not recover WebDriver after page load failure")
+                    driver.get(url)
+                time.sleep(2)
         
         # Get the fully rendered HTML
         html_content = driver.page_source
@@ -260,7 +270,74 @@ def scrape_tripitaka_page(url: str):
             "error": str(e)
         }
     finally:
-        driver.quit()
+        # Don't quit the persistent driver, just let it know we're done with this page
+        pass
+
+def scrape_tripitaka_page_fallback(url: str):
+    """
+    Fallback scraper using requests when Selenium fails
+    This will only capture static content, not JavaScript-rendered content
+    """
+    try:
+        print(f"🔄 Trying fallback scraping for: {url}")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Extract basic title
+        title_element = soup.find('title')
+        title = title_element.get_text(strip=True) if title_element else "Untitled"
+        
+        # Try to extract any text content (will be limited without JavaScript)
+        text_content = soup.get_text(strip=True)
+        
+        return {
+            "url": url,
+            "title": title,
+            "content": {
+                "sinhala": text_content[:1000],  # Limit to first 1000 chars
+                "pali": ""
+            },
+            "is_valid_content": False,
+            "content_quality": "fallback_scrape",
+            "note": "Scraped with requests fallback - limited content"
+        }
+        
+    except Exception as e:
+        print(f"❌ Fallback scraping also failed: {e}")
+        return {
+            "url": url,
+            "title": "Error",
+            "content": {
+                "sinhala": "",
+                "pali": ""
+            },
+            "error": f"Both Selenium and fallback failed: {str(e)}",
+            "is_valid_content": False,
+            "content_quality": "error"
+        }
+
+def scrape_tripitaka_page_with_retry(url: str, max_attempts: int = 2):
+    """
+    Main scraping function with fallback retry logic
+    """
+    # First try Selenium
+    try:
+        result = scrape_tripitaka_page(url)
+        if "error" not in result:
+            return result
+    except Exception as selenium_error:
+        print(f"🚨 Selenium failed: {selenium_error}")
+    
+    # If Selenium fails, try the fallback
+    print(f"🔄 Attempting fallback scraping...")
+    return scrape_tripitaka_page_fallback(url)
 
 def save_json(data, filename):
     os.makedirs(os.path.dirname(filename), exist_ok=True)

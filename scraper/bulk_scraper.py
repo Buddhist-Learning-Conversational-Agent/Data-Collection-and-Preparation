@@ -8,7 +8,13 @@ import threading
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.nikaya_config import NIKAYA_RANGES, get_nikaya_info, print_nikaya_summary
-from .tripitaka_scraper import scrape_tripitaka_page
+try:
+    from .tripitaka_scraper import scrape_tripitaka_page_with_retry
+    selenium_available = True
+except ImportError:
+    selenium_available = False
+
+from .simple_requests_scraper import scrape_tripitaka_page_simple
 
 class BulkTripitakaScraper:
     def __init__(self, output_dir="output/bulk", max_workers=3, delay_between_requests=1.0, skip_invalid=False):
@@ -102,7 +108,8 @@ class BulkTripitakaScraper:
             time.sleep(self.delay_between_requests)
             
             # Scrape the content
-            data = scrape_tripitaka_page(url)
+            # Use simple requests scraper for now due to ChromeDriver issues
+            data = scrape_tripitaka_page_simple(url)
             
             # Validate that we got content
             if not data or not data.get('content'):
