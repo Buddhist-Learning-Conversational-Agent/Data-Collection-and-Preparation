@@ -9,7 +9,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.nikaya_config import NIKAYA_RANGES, get_nikaya_info, print_nikaya_summary
 try:
-    from .tripitaka_scraper import scrape_tripitaka_page_with_retry
+    from .robust_webdriver import scrape_tripitaka_page_robust
     selenium_available = True
 except ImportError:
     selenium_available = False
@@ -109,7 +109,7 @@ class BulkTripitakaScraper:
             
             # Scrape the content
             # Use simple requests scraper for now due to ChromeDriver issues
-            data = scrape_tripitaka_page_simple(url)
+            data = scrape_tripitaka_page_robust(url)
             
             # Validate that we got content
             if not data or not data.get('content'):
